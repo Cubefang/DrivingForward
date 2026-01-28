@@ -1,0 +1,11 @@
+--2025-12-20 21:05:50--  https://drive.usercontent.google.com/download?id=1FsgDWnTjTrG6StnhHGjdMCrCd8HobFx7
+Resolving drive.usercontent.google.com (drive.usercontent.google.com)... 142.250.197.97, 2404:6800:4005:812::2001
+Connecting to drive.usercontent.google.com (drive.usercontent.google.com)|142.250.197.97|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2374 (2.3K) [text/html]
+Saving to: ‘download?id=1FsgDWnTjTrG6StnhHGjdMCrCd8HobFx7’
+
+           download?id   0%[                            ]       0  --.-KB/s               download?id=1FsgDWnTjT 100%[===========================>]   2.32K  --.-KB/s    in 0.001s  
+
+2025-12-20 21:05:50 (3.34 MB/s) - ‘download?id=1FsgDWnTjTrG6StnhHGjdMCrCd8HobFx7’ saved [2374/2374]
+

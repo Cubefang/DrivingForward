@@ -12,6 +12,8 @@ def construct_dataset(cfg, mode, **kwargs):
             'back_context': cfg['data']['back_context'],
             'forward_context': cfg['data']['forward_context'],
             'data_transform': get_transforms('train', **kwargs),
+            'depth_folder': cfg['data'].get('depth_folder', 'DEPTH_MAP'),
+            'use_dvgt_depth': cfg['data'].get('use_dvgt_depth', False),
             'depth_type': cfg['data']['depth_type'] if 'gt_depth' in cfg['data']['train_requirements'] else None,
             'with_pose': 'gt_pose' in cfg['data']['train_requirements'],
             'with_ego_pose': 'gt_ego_pose' in cfg['data']['train_requirements'],
@@ -24,6 +26,8 @@ def construct_dataset(cfg, mode, **kwargs):
             'back_context': cfg['data']['back_context'],
             'forward_context': cfg['data']['forward_context'],
             'data_transform': get_transforms('train', **kwargs), # for aligning inputs without any augmentations
+            'depth_folder': cfg['data'].get('depth_folder', 'DEPTH_MAP'),
+            'use_dvgt_depth': cfg['data'].get('use_dvgt_depth', False),
             'depth_type': cfg['data']['depth_type'] if 'gt_depth' in cfg['data']['val_requirements'] else None,
             'with_pose': 'gt_pose' in cfg['data']['val_requirements'],
             'with_ego_pose': 'gt_ego_pose' in cfg['data']['val_requirements'],

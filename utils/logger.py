@@ -169,9 +169,11 @@ class Logger:
             disp_gt = self.to_disp(depth_gt, inputs[('K', 0)][:, cam_id, ...])
             plot_disp_tb(writer, step, disp_gt, set_tb_title('cam', cam_id, 'disp_gt'))
 
-            plot_tb(writer, step, target_view[('reproj_loss', scale)], set_tb_title('cam', cam_id, 'reproj')) # reprojection image
-            plot_tb(writer, step, target_view[('reproj_mask', scale)], set_tb_title('cam', cam_id, 'reproj_mask')) # reprojection mask
-            plot_tb(writer,  step, inputs['mask'][:, cam_id, ...], set_tb_title('cam', cam_id, 'self_occ_mask'))
+            # 仅在存在自监督重投影结果时记录
+            if ('reproj_loss', scale) in target_view and ('reproj_mask', scale) in target_view:
+                plot_tb(writer, step, target_view[('reproj_loss', scale)], set_tb_title('cam', cam_id, 'reproj')) # reprojection image
+                plot_tb(writer, step, target_view[('reproj_mask', scale)], set_tb_title('cam', cam_id, 'reproj_mask')) # reprojection mask
+                plot_tb(writer,  step, inputs['mask'][:, cam_id, ...], set_tb_title('cam', cam_id, 'self_occ_mask'))
     
             if self.spatio:
                 plot_norm_tb(writer, step, target_view[('overlap', 0, scale)], set_tb_title('cam', cam_id, 'sp'))

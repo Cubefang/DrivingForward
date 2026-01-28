@@ -126,35 +126,56 @@ class MultiCamLoss(SingleCamLoss):
                 'ref_mask': inputs['mask'][:,cam,...]
             }
                           
-            reprojection_loss = self.compute_reproj_loss(inputs, target_view, **kargs)
-            smooth_loss = self.compute_smooth_loss(inputs, target_view, **kargs)
-            spatio_loss = self.compute_spatio_loss(inputs, target_view, **kargs)
-            
-            kargs['reproj_loss_mask'] = target_view[('reproj_mask', scale)]
-            spatio_tempo_loss = self.compute_spatio_tempo_loss(inputs, target_view, **kargs)
+            reprojection_loss = 0.0
+            smooth_loss = 0.0
+            spatio_loss = 0.0
+            spatio_tempo_loss = 0.0
+            if getattr(self, 'enable_self_supervised_depth', True):
+                reprojection_loss = self.compute_reproj_loss(inputs, target_view, **kargs)
+                smooth_loss = self.compute_smooth_loss(inputs, target_view, **kargs)
+                spatio_loss = self.compute_spatio_loss(inputs, target_view, **kargs)
+                kargs['reproj_loss_mask'] = target_view[('reproj_mask', scale)]
+                spatio_tempo_loss = self.compute_spatio_tempo_loss(inputs, target_view, **kargs)
 
             if self.gaussian:
                 gaussian_loss = self.compute_gaussian_loss(inputs, target_view, cam, scale)
             
             pose_loss = 0
                 
-            cam_loss += reprojection_loss
-            cam_loss += self.disparity_smoothness * smooth_loss / (2 ** scale)            
-            cam_loss += self.spatio_coeff * spatio_loss + self.spatio_tempo_coeff * spatio_tempo_loss
+            if getattr(self, 'enable_self_supervised_depth', True):
+                cam_loss += reprojection_loss
+                cam_loss += self.disparity_smoothness * smooth_loss / (2 ** scale)            
+                cam_loss += self.spatio_coeff * spatio_loss + self.spatio_tempo_coeff * spatio_tempo_loss
             if self.gaussian:
                 cam_loss += self.gaussian_coeff * gaussian_loss                            
             cam_loss += self.pose_loss_coeff* pose_loss
+
+            # DVGT教师监督
+            dvgt_loss = None
+            if getattr(self, 'use_dvgt_supervision', False) and (('teacher_depth', 0, scale) in target_view):
+                pred_depth = target_view[('depth', 0, scale)]
+                gt_depth = target_view[('teacher_depth', 0, scale)]
+                mask = target_view.get(('teacher_conf', 0, scale), None)
+                if mask is not None:
+                    dvgt_loss = (torch.abs(pred_depth - gt_depth) * mask).sum() / (mask.sum() + 1e-8)
+                else:
+                    dvgt_loss = torch.mean(torch.abs(pred_depth - gt_depth))
+                cam_loss += getattr(self, 'dvgt_depth_coeff', 1.0) * dvgt_loss
             
             ##########################
             # for logger
             ##########################
             if scale == 0:
-                loss_dict['reproj_loss'] = reprojection_loss.item()
-                loss_dict['spatio_loss'] = spatio_loss.item()
+                if getattr(self, 'enable_self_supervised_depth', True):
+                    loss_dict['reproj_loss'] = reprojection_loss if isinstance(reprojection_loss, float) else reprojection_loss.item()
+                    loss_dict['spatio_loss'] = spatio_loss if isinstance(spatio_loss, float) else spatio_loss.item()
                 if self.gaussian:
                     loss_dict['gaussian_loss'] = gaussian_loss.item()
-                loss_dict['spatio_tempo_loss'] = spatio_tempo_loss.item()
-                loss_dict['smooth'] = smooth_loss.item()
+                if getattr(self, 'enable_self_supervised_depth', True):
+                    loss_dict['spatio_tempo_loss'] = spatio_tempo_loss if isinstance(spatio_tempo_loss, float) else spatio_tempo_loss.item()
+                    loss_dict['smooth'] = smooth_loss if isinstance(smooth_loss, float) else smooth_loss.item()
+                if dvgt_loss is not None:
+                    loss_dict['dvgt_depth'] = dvgt_loss.item()
                 
                 # log statistics
                 self.get_logs(loss_dict, target_view, cam)                        

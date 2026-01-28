@@ -5,6 +5,7 @@
 **/__pycache__/
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
+input_data
 results
 weights_SF
 weights_MF

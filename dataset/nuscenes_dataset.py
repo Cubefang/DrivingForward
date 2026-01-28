@@ -1,4 +1,12 @@
 import os
+import logging
+import zlib
+import random
+import pickle
+try:
+    import _pickle
+except ImportError:
+    _pickle = None
 
 import numpy as np
 import PIL.Image as pil
@@ -10,6 +18,13 @@ from nuscenes.nuscenes import NuScenes
 from pyquaternion import Quaternion
 
 from .data_util import img_loader, mask_loader_scene, align_dataset, transform_mask_sample
+
+logger = logging.getLogger(__name__)
+
+
+class CorruptedDepthMapError(Exception):
+    """自定义异常：深度图文件损坏"""
+    pass
 
 
 def is_numpy(data):
@@ -70,6 +85,8 @@ class NuScenesdataset(Dataset):
                  forward_context=0,
                  data_transform=None,
                  depth_type=None,
+                 depth_folder='DEPTH_MAP',
+                 use_dvgt_depth=False,
                  scale_range=2,
                  with_pose=None,
                  with_ego_pose=None,
@@ -84,6 +101,8 @@ class NuScenesdataset(Dataset):
         self.cameras = cameras
         self.scales = np.arange(scale_range+2) 
         self.num_cameras = len(cameras)
+        self.depth_folder = depth_folder
+        self.use_dvgt_depth = use_dvgt_depth
 
         self.bwd = back_context
         self.fwd = forward_context
@@ -245,15 +264,47 @@ class NuScenesdataset(Dataset):
         This function returns depth map for nuscenes dataset,
         result of depth map is saved in nuscenes/samples/DEPTH_MAP
         """        
-        # generate depth filename
-        filename = '{}/{}.npz'.format(
-                        os.path.join(os.path.dirname(self.path), 'samples'),
-                        'DEPTH_MAP/{}/{}'.format(sensor, cam_sample['filename']))
+        # generate depth filename (DEPTH_MAP or DEPTH_DVGT)
+        # cam_sample['filename'] is like 'samples/CAM_FRONT/xxx.jpg'
+        cam_rel = cam_sample['filename']
+        if cam_rel.startswith('samples/'):
+            cam_rel = cam_rel[len('samples/'):]
+        img_basename = os.path.basename(cam_rel)  # xxx.jpg
+        filename = os.path.join(
+            self.path,
+            'samples',
+            self.depth_folder,
+            sensor,
+            img_basename + '.npz'
+        )
                         
         # load and return if exists
         if os.path.exists(filename):
-            return np.load(filename, allow_pickle=True)['depth']
+            try:
+                return np.load(filename, allow_pickle=True)['depth']
+            except (zlib.error, OSError, ValueError, KeyError, 
+                    pickle.UnpicklingError, EOFError) as e:
+                sample_token = sample.get('token', 'unknown') if isinstance(sample, dict) else getattr(sample, 'token', 'unknown')
+                error_type = type(e).__name__
+                error_msg = f"深度图文件损坏，跳过该帧 - 文件: {filename}, 传感器: {sensor}, 样本token: {sample_token}, 错误类型: {error_type}, 错误信息: {str(e)}"
+                logger.warning(error_msg)
+                raise CorruptedDepthMapError(error_msg) from e
+            except Exception as e:
+                error_type = type(e).__name__
+                if 'UnpicklingError' in error_type or 'EOFError' in error_type or 'pickle' in error_type.lower():
+                    sample_token = sample.get('token', 'unknown') if isinstance(sample, dict) else getattr(sample, 'token', 'unknown')
+                    error_msg = f"深度图文件损坏，跳过该帧 - 文件: {filename}, 传感器: {sensor}, 样本token: {sample_token}, 错误类型: {error_type}, 错误信息: {str(e)}"
+                    logger.warning(error_msg)
+                    raise CorruptedDepthMapError(error_msg) from e
+                else:
+                    raise
         else:
+            # DVGT深度不生成，只读取
+            if self.use_dvgt_depth:
+                error_msg = f"DVGT深度文件缺失: {filename}"
+                logger.warning(error_msg)
+                raise CorruptedDepthMapError(error_msg)
+
             lidar_sample = self.dataset.get(
                 'sample_data', sample['data']['LIDAR_TOP'])
 
@@ -360,67 +411,93 @@ class NuScenesdataset(Dataset):
         return len(self.filenames)
     
     def __getitem__(self, idx):
-        # get nuscenes dataset sample
-        frame_idx = self.filenames[idx].strip().split()[0]
-        sample_nusc = self.dataset.get('sample', frame_idx)
+        """
+        获取数据样本，如果深度图损坏则跳过该帧，尝试获取下一个样本
+        """
+        max_retries = 10  # 最多重试10次，避免无限循环
+        retry_count = 0
         
-        sample = []
-        contexts = []
-        if self.bwd:
-            contexts.append(-1)
-        if self.fwd:
-            contexts.append(1)
+        while retry_count < max_retries:
+            try:
+                # get nuscenes dataset sample
+                frame_idx = self.filenames[idx].strip().split()[0]
+                sample_nusc = self.dataset.get('sample', frame_idx)
+                
+                sample = []
+                contexts = []
+                if self.bwd:
+                    contexts.append(-1)
+                if self.fwd:
+                    contexts.append(1)
 
-        # loop over all cameras            
-        for cam in self.cameras:
-            cam_sample = self.dataset.get(
-                'sample_data', sample_nusc['data'][cam])
+                # loop over all cameras            
+                for cam in self.cameras:
+                    cam_sample = self.dataset.get(
+                        'sample_data', sample_nusc['data'][cam])
 
-            data = {
-                'idx': idx,
-                'token': frame_idx,
-                'sensor_name': cam,
-                'contexts': contexts,
-                'filename': cam_sample['filename'],
-                'rgb': self.get_current('rgb', cam_sample),
-                'intrinsics': self.get_current('intrinsics', cam_sample)
-            }
+                    data = {
+                        'idx': idx,
+                        'token': frame_idx,
+                        'sensor_name': cam,
+                        'contexts': contexts,
+                        'filename': cam_sample['filename'],
+                        'rgb': self.get_current('rgb', cam_sample),
+                        'intrinsics': self.get_current('intrinsics', cam_sample)
+                    }
 
-            # if depth is returned            
-            if self.with_depth:
-                data.update({
-                    'depth': self.generate_depth_map(sample_nusc, cam, cam_sample)
-                })
-            # if pose is returned
-            if self.with_pose:
-                data.update({
-                    'extrinsics':self.get_current('extrinsics', cam_sample)
-                })
-            # if ego_pose is returned
-            if self.with_ego_pose:
-                data.update({
-                    'ego_pose': self.get_cam_T_cam(cam_sample)
-                })
-            # if mask is returned
-            if self.with_mask:
-                data.update({
-                    'mask': self.mask_loader(self.mask_path, '', cam)
-                })        
-            # if context is returned
-            if self.has_context:
-                data.update({
-                    'rgb_context': self.get_context('rgb', cam_sample)
-                })
+                    # if depth is returned            
+                    if self.with_depth:
+                        data.update({
+                            'depth': self.generate_depth_map(sample_nusc, cam, cam_sample)
+                        })
+                    # if pose is returned
+                    if self.with_pose:
+                        data.update({
+                            'extrinsics':self.get_current('extrinsics', cam_sample)
+                        })
+                    # if ego_pose is returned
+                    if self.with_ego_pose:
+                        data.update({
+                            'ego_pose': self.get_cam_T_cam(cam_sample)
+                        })
+                    # if mask is returned
+                    if self.with_mask:
+                        data.update({
+                            'mask': self.mask_loader(self.mask_path, '', cam)
+                        })        
+                    # if context is returned
+                    if self.has_context:
+                        data.update({
+                            'rgb_context': self.get_context('rgb', cam_sample)
+                        })
 
-            sample.append(data)
+                    sample.append(data)
 
-        # apply same data transformations for all sensors
-        if self.data_transform:
-            sample = [self.data_transform(smp) for smp in sample]
-            sample = [transform_mask_sample(smp, self.data_transform) for smp in sample]
+                # apply same data transformations for all sensors
+                if self.data_transform:
+                    sample = [self.data_transform(smp) for smp in sample]
+                    sample = [transform_mask_sample(smp, self.data_transform) for smp in sample]
 
-        # stack and align dataset for our trainer
-        sample = stack_sample(sample)
-        sample = align_dataset(sample, self.scales, contexts)
-        return sample
+                # stack and align dataset for our trainer
+                sample = stack_sample(sample)
+                sample = align_dataset(sample, self.scales, contexts)
+                return sample
+                
+            except CorruptedDepthMapError as e:
+                # 深度图损坏，跳过该帧，尝试获取下一个样本
+                retry_count += 1
+                if retry_count >= max_retries:
+                    # 如果连续多个样本都损坏，记录错误并抛出异常
+                    error_msg = f"连续 {max_retries} 个样本的深度图都损坏，无法继续获取有效样本"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg) from e
+                # 尝试获取下一个有效的索引（优先使用顺序索引，如果失败则使用随机索引）
+                if retry_count <= 5:
+                    # 前5次尝试使用顺序索引
+                    idx = (idx + 1) % len(self.filenames)
+                else:
+                    # 后续尝试使用随机索引，避免在某个区域有很多损坏文件时的问题
+                    idx = random.randint(0, len(self.filenames) - 1)
+                # 继续循环尝试下一个样本
+                continue
                 

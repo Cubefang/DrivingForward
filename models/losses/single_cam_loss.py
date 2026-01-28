@@ -74,18 +74,36 @@ class SingleCamLoss(BaseLoss):
                 'ref_mask': inputs['mask'][:,cam,...]
             }            
 
-            reprojection_loss = self.compute_reproj_loss(inputs, target_view, **kargs)
-            smooth_loss = self.compute_smooth_loss(inputs, target_view, **kargs)
+            reprojection_loss = 0.0
+            smooth_loss = 0.0
+            if getattr(self, 'enable_self_supervised_depth', True):
+                reprojection_loss = self.compute_reproj_loss(inputs, target_view, **kargs)
+                smooth_loss = self.compute_smooth_loss(inputs, target_view, **kargs)
+                cam_loss += reprojection_loss
+                cam_loss += self.disparity_smoothness * smooth_loss / (2 ** scale)
 
-            cam_loss += reprojection_loss
-            cam_loss += self.disparity_smoothness * smooth_loss / (2 ** scale)
+            # DVGT教师监督
+            dvgt_loss = None
+            if getattr(self, 'use_dvgt_supervision', False) and (('teacher_depth', 0, scale) in target_view):
+                pred_depth = target_view[('depth', 0, scale)]
+                gt_depth = target_view[('teacher_depth', 0, scale)]
+                mask = target_view.get(('teacher_conf', 0, scale), None)
+                if mask is not None:
+                    # 避免除零
+                    dvgt_loss = (torch.abs(pred_depth - gt_depth) * mask).sum() / (mask.sum() + 1e-8)
+                else:
+                    dvgt_loss = torch.mean(torch.abs(pred_depth - gt_depth))
+                cam_loss += getattr(self, 'dvgt_depth_coeff', 1.0) * dvgt_loss
             
             ##########################
             # for logger
             ##########################
             if scale == 0:
-                loss_dict['reproj_loss'] = reprojection_loss.item()            
-                loss_dict['smooth'] = smooth_loss.item()
+                if getattr(self, 'enable_self_supervised_depth', True):
+                    loss_dict['reproj_loss'] = reprojection_loss if isinstance(reprojection_loss, float) else reprojection_loss.item()
+                    loss_dict['smooth'] = smooth_loss if isinstance(smooth_loss, float) else smooth_loss.item()
+                if dvgt_loss is not None:
+                    loss_dict['dvgt_depth'] = dvgt_loss.item()
 
                 # log statistics
                 self.get_logs(loss_dict, target_view, cam)                    

@@ -24,11 +24,13 @@ model:
 
 data:
   data_path: './input_data/nuscenes/'
-  log_dir: './results/'
+  log_dir: './results/suppervised0113'
   dataset: 'nuscenes'
   back_context: 1
   forward_context: 1
   depth_type: 'lidar'
+  depth_folder: 'DEPTH_DVGT'   # DEPTH_MAP（默认LIDAR投影）或 DEPTH_DVGT（DVGT推理）
+  use_dvgt_depth: True       # True 则读取 DEPTH_DVGT 中的深度，不再用DEPTH_MAP
   cameras: ['CAM_FRONT', 'CAM_FRONT_LEFT', 'CAM_FRONT_RIGHT', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT', 'CAM_BACK']
   # gt_ego_pose, gt_depth is not used during training, only for visulization
   train_requirements: (gt_pose, gt_ego_pose, gt_depth, mask)
@@ -40,6 +42,15 @@ training:
   width: 640
   scales: [0] 
   frame_ids: [0, -1, 1]
+  
+  # depth supervision switch
+  enable_self_supervised_depth: True   # 传统自监督深度损失（光度+平滑）
+  use_dvgt_supervision: False         # 是否启用DVGT教师监督深度
+  use_supervised_depth_net: False    # True 使用弱监督深度网络（拟合外部深度）
+  use_pose_net: False                  # 关闭时跳过pose_net，使用GT cam_T_cam
+  dvgt_ckpt_path: '/home/lfliang/project/DVGT/ckpt/open_ckpt.pt'
+  dvgt_conf_threshold: 0.0             # DVGT置信度阈值，>阈值的像素用于监督
+  dvgt_depth_coeff: 1.0                # DVGT深度监督权重
   
   # optimization
   batch_size: 1
@@ -80,8 +91,8 @@ eval:
   eval_min_depth: 0
   eval_max_depth: 80
   eval_visualize: False
-  save_images: False
-  save_path: './results/images'
+  save_images: True
+  save_path: './results/images/DVGT_depth0122'
   
 load:
   pretrain: False
