@@ -154,7 +154,7 @@ dependencies:
       - decorator==5.1.1
       - defusedxml==0.7.1
       - descartes==1.1.0
-      - diff-gaussian-rasterization==0.0.0
+      # - diff-gaussian-rasterization==0.0.0
       - diskcache==5.6.3
       - e3nn==0.4.0
       - einops==0.7.0

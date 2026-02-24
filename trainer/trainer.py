@@ -78,6 +78,14 @@ class DrivingForwardTrainer:
         This function trains models.
         """
         model.set_train()
+
+        # 设置当前epoch到model中
+        model.epoch = self.epoch
+
+        # 重置所有可视化计数器（每个epoch开始时）
+        if hasattr(model, 'reset_debug_counter'):
+            model.reset_debug_counter()
+
         pbar = tqdm(total=len(data_loader), desc='training on epoch {}'.format(self.epoch), mininterval=100)
         for batch_idx, inputs in enumerate(data_loader):         
             before_op_time = time.time()

@@ -5,7 +5,7 @@ ddp:
   
 model:
   # mode: 'MF' or 'SF'
-  novel_view_mode: 'MF'
+  novel_view_mode: 'SF'
 
   num_layers: 18
   weights_init: True
@@ -24,7 +24,8 @@ model:
 
 data:
   data_path: './input_data/nuscenes/'
-  log_dir: './results/suppervised0113'
+  # === 快速调试配置：交换train和val ===
+  log_dir: './results/debug_val_train'  # 临时调试目录
   dataset: 'nuscenes'
   back_context: 1
   forward_context: 1
@@ -35,6 +36,10 @@ data:
   # gt_ego_pose, gt_depth is not used during training, only for visulization
   train_requirements: (gt_pose, gt_ego_pose, gt_depth, mask)
   val_requirements: (gt_pose, gt_ego_pose, gt_depth, mask)
+
+  # === 临时调试：用val训练，train验证 ===
+  swap_train_val: True         # 交换train和val数据集
+  max_val_samples: 50          # 验证时只用前50个样本（原train数据）
 
 training:
   # basic
@@ -51,12 +56,70 @@ training:
   dvgt_ckpt_path: '/home/lfliang/project/DVGT/ckpt/open_ckpt.pt'
   dvgt_conf_threshold: 0.0             # DVGT置信度阈值，>阈值的像素用于监督
   dvgt_depth_coeff: 1.0                # DVGT深度监督权重
+
+  # === GS补全配置 - 快速调试模式 ===
+  use_gs_completion: True              # 启用GS补全网络
+  gs_completion_debug: True            # 启用调试输出（打印详细统计）
+  visualize_teacher_mask: True         # 可视化教师真值mask
+  visualize_student_heads: True        # 可视化Student预测head
+  visualize_completion_sampling: True  # 可视化补全GS采样
+  visualize_completion_rendering: True # 可视化带补全的渲染
+  visualize_batch_limit: 200           # 可视化batch数量限制（从20改为200）
+
+  # === 4种实验配置的深度阈值，取消注释对应行 ===
+  # teacher_depth_filter_threshold: 50.0  # Exp1: Baseline (Conservative)
+  # teacher_depth_filter_threshold: 80.0  # Exp2: Aggressive
+  teacher_depth_filter_threshold: 50.0   # Exp3: Balanced (快速调试用)
+  # teacher_depth_filter_threshold: 30.0  # Exp4: Quality
+
+  # === 改进后的Student loss权重（Phase 1）===
+  # 核心改进：降低BCE权重，提高render loss权重
+  # 目标：鼓励在遮挡区域生成GS，避免过度拟合teacher mask
+  student_existence_loss_weight: 0.3   # 从1.0降到0.3（降低BCE硬监督）
+  student_local_loss_weight: 3.0       # 从2.0升到3.0（提高局部渲染质量）
+  student_global_loss_weight: 1.0      # 从0.5升到1.0（提高全局一致性）
+
+  # === 旧的实验配置（已废弃，保留用于对比）===
+  # Exp1: Baseline (Conservative) - 保守权重，验证框架稳定性
+  # student_existence_loss_weight: 0.5
+  # student_local_loss_weight: 1.0
+  # student_global_loss_weight: 0.3
+
+  # Exp2: Aggressive - 激进权重，最大化补全效果
+  # student_existence_loss_weight: 2.0
+  # student_local_loss_weight: 5.0
+  # student_global_loss_weight: 1.0
+
+  # Exp3: Balanced (旧版) - 平衡权重
+  # student_existence_loss_weight: 1.0
+  # student_local_loss_weight: 2.0
+  # student_global_loss_weight: 0.5
+
+  # Exp4: Quality - 优先渲染质量
+  # student_existence_loss_weight: 0.8
+  # student_local_loss_weight: 1.5
+  # student_global_loss_weight: 2.0
+
+  # Depth Dilation参数
+  depth_dilation_kernel: 5             # 深度膨胀核大小
+  depth_dilation_iters: 1              # 深度膨胀迭代次数
+
+  # Teacher Warping参数
+  teacher_depth_threshold: 2.0         # Z-Test深度阈值（米）- 增加以减少噪声，只标记显著的深度变化
+
+  # 补全网络参数
+  xyz_offset_scale: 10.0               # xyz偏移缩放因子
+
+  # 补全损失权重
+  completion_loss_weight: 1.0          # 补全总损失权重
+  completion_depth_weight: 0.1         # 补全深度损失权重（相对于RGB）
+
   
   # optimization
   batch_size: 1
   num_workers: 4
   learning_rate: 0.0001
-  num_epochs: 10
+  num_epochs: 10                # 快速调试：从10减少到3
   scheduler_step_size: 15
 
   # model / loss setting
@@ -92,7 +155,7 @@ eval:
   eval_max_depth: 80
   eval_visualize: False
   save_images: True
-  save_path: './results/images/DVGT_depth0122'
+  save_path: './results/images/debug_val_train'  # 快速调试保存路径
   
 load:
   pretrain: False
@@ -101,6 +164,6 @@ load:
   
 logging:
   early_phase: 5000
-  log_frequency: 1000
-  late_log_frequency: 5000
+  log_frequency: 10            # 快速调试：从1000改为10
+  late_log_frequency: 50       # 快速调试：从5000改为50
   save_frequency: 1

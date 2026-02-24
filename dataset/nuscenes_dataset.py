@@ -85,7 +85,7 @@ class NuScenesdataset(Dataset):
                  forward_context=0,
                  data_transform=None,
                  depth_type=None,
-                 depth_folder='DEPTH_MAP',
+                 depth_folder='DEPTH_DVGT',
                  use_dvgt_depth=False,
                  scale_range=2,
                  with_pose=None,
@@ -164,6 +164,49 @@ class NuScenesdataset(Dataset):
             fwd_sample = self.dataset.get('sample_data', cam_sample['next'])
             fwd_context = [self.get_current(key, fwd_sample)]
         return bwd_context + fwd_context
+
+    def get_context_depth(self, cam_sample, sensor):
+        """
+        This function returns depth maps for forward context (t+1)
+        """
+        fwd_depth = []
+        if self.fwd != 0:
+            fwd_sample = self.dataset.get('sample_data', cam_sample['next'])
+            # fwd_sample['filename'] is like 'sweeps/CAM_FRONT/xxx.jpg'
+            cam_rel = fwd_sample['filename']
+
+            # 判断是 samples 还是 sweeps
+            if cam_rel.startswith('samples/'):
+                depth_dir = 'samples'
+                cam_rel = cam_rel[len('samples/'):]
+            elif cam_rel.startswith('sweeps/'):
+                depth_dir = 'sweeps'
+                cam_rel = cam_rel[len('sweeps/'):]
+            else:
+                raise ValueError(f"Unknown path format: {cam_rel}")
+
+            img_basename = os.path.basename(cam_rel)  # xxx.jpg
+            filename = os.path.join(
+                self.path,
+                depth_dir,
+                self.depth_folder,
+                sensor,
+                img_basename + '.npz'
+            )
+
+            # load and return if exists
+            if os.path.exists(filename):
+                try:
+                    depth = np.load(filename, allow_pickle=True)['depth']
+                    fwd_depth = [depth]
+                except Exception as e:
+                    logger.warning(f"Failed to load t+1 depth: {filename}, error: {str(e)}")
+                    fwd_depth = []
+            else:
+                logger.warning(f"t+1 depth file not found: {filename}")
+                fwd_depth = []
+
+        return fwd_depth
     
     def get_cam_T_cam(self, cam_sample):
         # cam 0 to world
@@ -470,6 +513,13 @@ class NuScenesdataset(Dataset):
                         data.update({
                             'rgb_context': self.get_context('rgb', cam_sample)
                         })
+                        # 加载 t+1 时刻的深度图
+                        if self.with_depth:
+                            depth_context = self.get_context_depth(cam_sample, cam)
+                            if len(depth_context) > 0:
+                                data.update({
+                                    'depth_context': depth_context
+                                })
 
                     sample.append(data)
 
